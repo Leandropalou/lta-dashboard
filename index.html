@@ -124,6 +124,20 @@
     <div class="chart-wrap"><canvas id="analyticsChart"></canvas></div>
   </div>
 
+  <!-- Conversion Funnel -->
+  <div class="widget" style="margin-bottom:20px">
+    <div class="widget-header">
+      <div class="widget-icon-bg" style="background:rgba(167,139,250,0.13)">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 2 22"/><path d="M22 2H12"/><path d="M22 2v10"/><path d="m2 22 10-10"/></svg>
+      </div>
+      <div>
+        <div class="widget-title">Conversion Funnel</div>
+        <div class="widget-subtitle">Visitors → Forms → Orders (30 days)</div>
+      </div>
+    </div>
+    <div id="conversionFunnel" style="padding:8px 0;color:#888;font-size:13px">Loading funnel data...</div>
+  </div>
+
   <!-- Newest Signups -->
   <div class="widget" style="margin-bottom:20px">
     <div class="widget-header">
@@ -293,6 +307,77 @@ async function loadLiveData() {
     const badge = document.getElementById('liveBadge');
     if (badge) { badge.textContent = 'OFFLINE'; badge.style.background = 'rgba(239,68,68,0.15)'; badge.style.color = '#ef4444'; }
   }
+}
+
+async function loadAnalytics() {
+  try {
+    const res = await fetch(`${API_BASE}/api/analytics?days=30`);
+    if (!res.ok) throw new Error('Analytics API failed');
+    const data = await res.json();
+    const metrics = data.metrics || {};
+
+    const sessionsData = (metrics['TOTAL_SESSIONS'] || {}).values || [];
+    const visitorsData = (metrics['TOTAL_UNIQUE_VISITORS'] || {}).values || [];
+    const salesData = (metrics['TOTAL_SALES'] || {}).values || [];
+    const ordersData = (metrics['TOTAL_ORDERS'] || {}).values || [];
+    const formsData = (metrics['TOTAL_FORMS_SUBMITTED'] || {}).values || [];
+
+    const dateMap = {};
+    sessionsData.forEach(v => { dateMap[v.date] = dateMap[v.date] || {}; dateMap[v.date].sessions = v.value; });
+    visitorsData.forEach(v => { dateMap[v.date] = dateMap[v.date] || {}; dateMap[v.date].visitors = v.value; });
+    salesData.forEach(v => { dateMap[v.date] = dateMap[v.date] || {}; dateMap[v.date].revenue = v.value; });
+
+    ANALYTICS = Object.keys(dateMap).sort().map(date => ({
+      date: date.slice(5),
+      sessions: dateMap[date].sessions || 0,
+      visitors: dateMap[date].visitors || 0,
+      revenue: dateMap[date].revenue || 0,
+    }));
+
+    renderMetricBtns();
+    if (analyticsChart) {
+      analyticsChart.data.labels = ANALYTICS.map(d => d.date);
+      analyticsChart.data.datasets[0].data = ANALYTICS.map(d => d[currentMetric]);
+      analyticsChart.update();
+    }
+
+    const totalVisitors = (metrics['TOTAL_UNIQUE_VISITORS'] || {}).total || 0;
+    const totalForms = (metrics['TOTAL_FORMS_SUBMITTED'] || {}).total || 0;
+    const totalOrders = (metrics['TOTAL_ORDERS'] || {}).total || 0;
+    const totalSales = (metrics['TOTAL_SALES'] || {}).total || 0;
+    renderFunnel(totalVisitors, totalForms, totalOrders, totalSales);
+  } catch (err) {
+    console.error('Failed to load analytics:', err);
+  }
+}
+
+function renderFunnel(visitors, forms, orders, sales) {
+  const funnel = $('conversionFunnel');
+  if (!funnel) return;
+  const steps = [
+    { label: 'Unique Visitors', value: visitors, color: '#60a5fa' },
+    { label: 'Forms Submitted', value: forms, color: '#a78bfa' },
+    { label: 'Orders', value: orders, color: '#F9652B' },
+  ];
+  const maxVal = Math.max(visitors, 1);
+  funnel.innerHTML = `
+    <div style="display:flex;gap:12px;align-items:flex-end;margin-bottom:16px">
+      ${steps.map(s => {
+        const pct = Math.max((s.value / maxVal) * 100, 8);
+        const rate = s.label === 'Unique Visitors' ? '' : `<div style="font-size:10px;color:#888;margin-top:2px">${visitors > 0 ? ((s.value / visitors) * 100).toFixed(1) : 0}%</div>`;
+        return `<div style="flex:1;text-align:center">
+          <div style="font-size:20px;font-weight:700;color:${s.color}">${s.value.toLocaleString()}</div>
+          ${rate}
+          <div style="height:${pct}px;background:${s.color}33;border-radius:6px;margin:6px auto 4px;width:80%;border:1px solid ${s.color}44"></div>
+          <div style="font-size:11px;color:#888">${s.label}</div>
+        </div>`;
+      }).join('<div style="display:flex;align-items:center;color:#555;font-size:16px;padding-bottom:30px">→</div>')}
+    </div>
+    <div style="text-align:center;padding:8px;background:#111;border-radius:8px;border:1px solid #2A2A2A">
+      <span style="color:#888;font-size:12px">Revenue (30 days)</span>
+      <span style="color:#22c55e;font-size:18px;font-weight:700;margin-left:8px">£${sales.toLocaleString()}</span>
+    </div>
+  `;
 }
 
 const WELCOME = {
@@ -1315,6 +1400,7 @@ renderTodos();
 
 // Load live data from Wix API (replaces placeholder data)
 loadLiveData();
+loadAnalytics();
 </script>
 </body>
 </html>
