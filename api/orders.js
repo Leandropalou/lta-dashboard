@@ -54,15 +54,21 @@ export default async function handler(req, res) {
 
   try {
     // Fetch active, paused, and recent cancelled in parallel
-    const [activeOrders, pausedOrders, cancelledData] = await Promise.all([
+    const [allActive, allPaused, cancelledData] = await Promise.all([
       fetchAllPages('ACTIVE'),
       fetchAllPages('PAUSED'),
       fetchOrders('CANCELED', 50, 0),
     ]);
 
+    // Filter to 'Membership' plans only
+    const PLAN_FILTER = 'Membership';
+    const activeOrders = allActive.filter(o => o.planName === PLAN_FILTER);
+    const pausedOrders = allPaused.filter(o => o.planName === PLAN_FILTER);
+    const cancelledOrders = (cancelledData.orders || []).filter(o => o.planName === PLAN_FILTER);
+
     // Count cancellations in last 7 days
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const recentCancellations = (cancelledData.orders || []).filter(o => {
+    const recentCancellations = cancelledOrders.filter(o => {
       const updated = new Date(o.updatedDate);
       return updated >= weekAgo;
     });
@@ -129,3 +135,4 @@ export default async function handler(req, res) {
     res.status(500).json({ error: err.message });
   }
 }
+
