@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LTA Dashboard â London Tango Academy</title>
+  <title>LTA Dashboard Ã¢ÂÂ London Tango Academy</title>
   <link rel="icon" href="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_64,h_45,al_c,q_85,enc_auto,quality_auto/logo.png" />
   <link rel="apple-touch-icon" href="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_180,h_126,al_c,q_85,enc_auto,quality_auto/logo.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -84,6 +84,18 @@
     .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
     .hidden { display: none; }
     svg.icon { vertical-align: middle; }
+    .diary-filters { display:flex; gap:6px; margin-bottom:14px; flex-wrap:wrap; }
+    .diary-filter-btn { border-radius:8px; padding:6px 14px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s; border:1px solid var(--border); background:#111; color:#888; }
+    .diary-filter-btn.active { background:rgba(249,101,43,0.15); border-color:rgba(249,101,43,0.4); color:#F9652B; }
+    .diary-entry { background:#111; border-radius:10px; padding:14px; border:1px solid var(--border); margin-bottom:8px; }
+    .diary-date-header { color:var(--orange); font-size:13px; font-weight:700; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px; }
+    .diary-event { display:flex; align-items:flex-start; gap:8px; padding:4px 0; }
+    .diary-event-dot { width:6px; height:6px; border-radius:50%; margin-top:6px; flex-shrink:0; }
+    .diary-event-text { color:#ddd; font-size:13px; line-height:1.4; }
+    .diary-empty { text-align:center; padding:20px 0; color:#888; font-size:13px; }
+    .diary-scroll::-webkit-scrollbar { width:4px; }
+    .diary-scroll::-webkit-scrollbar-track { background:transparent; }
+    .diary-scroll::-webkit-scrollbar-thumb { background:#333; border-radius:2px; }
   </style>
 </head>
 <body>
@@ -132,10 +144,25 @@
         </div>
         <div>
           <div class="widget-title">Conversion Funnel</div>
-          <div class="widget-subtitle">Visitors → Forms → Orders (30 days)</div>
+          <div class="widget-subtitle">Visitors â Forms â Orders (30 days)</div>
         </div>
       </div>
       <div id="conversionFunnel" style="padding:8px 0;color:#888;font-size:13px">Loading funnel data...</div>
+    </div>
+
+    <!-- M&L Diary -->
+    <div class="widget" style="margin-bottom:20px">
+      <div class="widget-header">
+        <div class="widget-icon-bg" style="background:rgba(96,165,250,0.13)">
+          <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
+        </div>
+        <div>
+          <div class="widget-title">M&amp;L Diary</div>
+          <div class="widget-subtitle" id="diarySubtitle">Loading diary...</div>
+        </div>
+      </div>
+      <div class="diary-filters" id="diaryFilters"></div>
+      <div id="diaryEntries" class="diary-scroll" style="max-height:500px;overflow-y:auto;padding-right:4px">Loading diary data...</div>
     </div>
 
     <!-- Newest Signups -->
@@ -195,7 +222,7 @@
         </div>
         <div>
           <div class="widget-title">Quick Messages</div>
-          <div class="widget-subtitle">Tap to expand Â· edit to refine your templates</div>
+          <div class="widget-subtitle">Tap to expand ÃÂ· edit to refine your templates</div>
         </div>
       </div>
       <div id="quickMessages"></div>
@@ -204,13 +231,13 @@
 </div>
 
 <script>
-// ââ LIVE DATA (populated by API) ââ
+// Ã¢ÂÂÃ¢ÂÂ LIVE DATA (populated by API) Ã¢ÂÂÃ¢ÂÂ
 let STATS = { totalSubscribers: '...', newThisWeek: '...', cancellationsThisWeek: '...', pausedTotal: '...', netChange: '...' };
 let SIGNUPS = [];
 let PAUSED = [];
 let ANALYTICS = []; // Analytics loaded separately if available
 
-// ââ API FETCH ââ
+// Ã¢ÂÂÃ¢ÂÂ API FETCH Ã¢ÂÂÃ¢ÂÂ
 const API_BASE = window.location.origin;
 
 function formatDate(isoStr) {
@@ -375,30 +402,126 @@ function renderFunnel(visitors, forms, orders, revenue) {
   '<span style="color:#34d399;font-weight:700;font-size:16px">\u00a3' + Number(revenue).toLocaleString() + '</span></div>';
 }
 
+// -- DIARY --
+let DIARY_ENTRIES = [];
+let diaryFilter = 'today';
+
+async function loadDiary() {
+  try {
+    const res = await fetch(API_BASE + '/api/diary');
+    if (!res.ok) throw new Error('Diary API failed');
+    const data = await res.json();
+    DIARY_ENTRIES = data.entries || [];
+    renderDiaryFilters();
+    renderDiary();
+  } catch (err) {
+    console.error('Failed to load diary:', err);
+    const el = document.getElementById('diaryEntries');
+    if (el) el.innerHTML = '<div class="diary-empty">Failed to load diary data</div>';
+  }
+}
+
+function renderDiaryFilters() {
+  var filters = ['today','week','month','all'];
+  var labels = {today:'Today',week:'This Week',month:'This Month',all:'All'};
+  document.getElementById('diaryFilters').innerHTML = filters.map(function(f) {
+    return '<button class="diary-filter-btn '+(diaryFilter===f?'active':'')+'" onclick="diaryFilter=\x27'+f+'\x27;renderDiary()">'+labels[f]+'</button>';
+  }).join('');
+}
+
+function renderDiary() {
+  renderDiaryFilters();
+  var now = new Date();
+  var todayStr = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-'+String(now.getDate()).padStart(2,'0');
+  var weekStart = new Date(now);
+  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  weekStart.setHours(0,0,0,0);
+  var weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekStart.getDate() + 6);
+  var monthNum = now.getMonth();
+  var yearNum = now.getFullYear();
+  var filtered = DIARY_ENTRIES;
+  if (diaryFilter === 'today') {
+    filtered = DIARY_ENTRIES.filter(function(e) {
+      var d = new Date(e.year, e.month - 1, e.day);
+      return d.toISOString().slice(0,10) === todayStr;
+    });
+  } else if (diaryFilter === 'week') {
+    filtered = DIARY_ENTRIES.filter(function(e) {
+      var d = new Date(e.year, e.month - 1, e.day);
+      return d >= weekStart && d <= weekEnd;
+    });
+  } else if (diaryFilter === 'month') {
+    filtered = DIARY_ENTRIES.filter(function(e) {
+      return (e.month - 1) === monthNum && e.year === yearNum;
+    });
+  }
+  var el = document.getElementById('diaryEntries');
+  var sub = document.getElementById('diarySubtitle');
+  if (filtered.length === 0) {
+    el.innerHTML = '<div class="diary-empty">No entries for this period</div>';
+    sub.textContent = 'No entries';
+    return;
+  }
+  sub.textContent = filtered.length + ' day' + (filtered.length === 1 ? '' : 's') + ' with entries';
+  var dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  el.innerHTML = filtered.map(function(entry) {
+    var dateObj = new Date(entry.year, entry.month - 1, entry.day);
+    var dateLabel = dayNames[dateObj.getDay()] + ', ' + entry.day + ' ' + monthNames[entry.month - 1] + ' ' + entry.year;
+    var isToday = dateObj.toISOString().slice(0,10) === todayStr;
+    var eventsHtml = '';
+    entry.events.forEach(function(ev) {
+      var parts = [];
+      if (ev.lta) parts.push('<span style="color:#F9652B;font-weight:600">LTA:</span> ' + ev.lta);
+      if (ev.privateMaria) {
+        var mLine = '<span style="color:#a78bfa;font-weight:600">Private (Maria):</span> ' + ev.privateMaria;
+        if (ev.mariaFee) mLine += ' <span style="color:#888">(' + ev.mariaFee + ')</span>';
+        parts.push(mLine);
+      }
+      if (ev.privateLolo) {
+        var lLine = '<span style="color:#60a5fa;font-weight:600">Private (Lolo):</span> ' + ev.privateLolo;
+        if (ev.loloFee) lLine += ' <span style="color:#888">(' + ev.loloFee + ')</span>';
+        parts.push(lLine);
+      }
+      if (ev.other) parts.push('<span style="color:#eab308;font-weight:600">Other:</span> ' + ev.other);
+      if (ev.bloch) parts.push('<span style="color:#fcd34d;font-weight:600">Bloch:</span> ' + ev.bloch);
+      if (ev.other2) parts.push('<span style="color:#888;font-weight:600">Other:</span> ' + ev.other2);
+      if (ev.therapy) parts.push('<span style="color:#34d399;font-weight:600">Therapy:</span> ' + ev.therapy);
+      parts.forEach(function(p) {
+        eventsHtml += '<div class="diary-event"><div class="diary-event-dot" style="background:#F9652B"></div><div class="diary-event-text">' + p + '</div></div>';
+      });
+    });
+    if (!eventsHtml) eventsHtml = '<div style="color:#555;font-size:12px;padding:4px 0">No events</div>';
+    var style = isToday ? 'border-color:rgba(249,101,43,0.4);background:#1a1410' : '';
+    return '<div class="diary-entry" style="' + style + '"><div class="diary-date-header">' + (isToday ? '&#9679; TODAY \u2014 ' : '') + dateLabel + '</div>' + eventsHtml + '</div>';
+  }).join('');
+}
+
 const WELCOME = {
-  "Paid â Beginner": n => `Hi ${n}, it's Leandro from London Tango Academy â welcome! Really glad you've joined us for your first tango steps ð Your classes are at 9 Endell Street, Covent Garden. Wear something comfortable you can move in, and smooth-soled shoes if you have them. Any questions, just message me here. Looking forward to meeting you!`,
-  "Paid â Intermediate": n => `Hi ${n}, Leandro here from London Tango Academy â really pleased to have you with us. Your subscription is all set up. I'll add you to the class WhatsApp group so you'll see updates and workshop announcements there. See you on the floor! ð`,
-  "Newsletter": n => `Hi ${n}, Leandro from London Tango Academy â thanks for signing up for our updates! You'll hear from us with news on classes, milongas, and guest teachers. If there's anything specific you'd like to hear about, just reply here. Abrazos, Leandro & Maria`,
+  "Paid Ã¢ÂÂ Beginner": n => `Hi ${n}, it's Leandro from London Tango Academy Ã¢ÂÂ welcome! Really glad you've joined us for your first tango steps Ã°ÂÂÂ Your classes are at 9 Endell Street, Covent Garden. Wear something comfortable you can move in, and smooth-soled shoes if you have them. Any questions, just message me here. Looking forward to meeting you!`,
+  "Paid Ã¢ÂÂ Intermediate": n => `Hi ${n}, Leandro here from London Tango Academy Ã¢ÂÂ really pleased to have you with us. Your subscription is all set up. I'll add you to the class WhatsApp group so you'll see updates and workshop announcements there. See you on the floor! Ã°ÂÂÂ`,
+  "Newsletter": n => `Hi ${n}, Leandro from London Tango Academy Ã¢ÂÂ thanks for signing up for our updates! You'll hear from us with news on classes, milongas, and guest teachers. If there's anything specific you'd like to hear about, just reply here. Abrazos, Leandro & Maria`,
 };
 
 const QUICK_MESSAGES = [
   { category:"Welcome & Onboarding", messages:[
-    {id:"w1",label:"First class reminder",text:"Hi! Just a quick reminder â your first class is tomorrow. We're at 9 Endell Street, Covent Garden (basement studio). Arrive 5 mins early so we can say hello. Wear comfortable clothes and smooth-soled shoes if you have them. See you there! ð"},
-    {id:"w2",label:"Post first class",text:"Hi! It was great to meet you today â well done on your first class! Remember, tango is a journey and everyone starts exactly where you are now. See you next week, and message me here if you have any questions. ð"},
+    {id:"w1",label:"First class reminder",text:"Hi! Just a quick reminder Ã¢ÂÂ your first class is tomorrow. We're at 9 Endell Street, Covent Garden (basement studio). Arrive 5 mins early so we can say hello. Wear comfortable clothes and smooth-soled shoes if you have them. See you there! Ã°ÂÂÂ"},
+    {id:"w2",label:"Post first class",text:"Hi! It was great to meet you today Ã¢ÂÂ well done on your first class! Remember, tango is a journey and everyone starts exactly where you are now. See you next week, and message me here if you have any questions. Ã°ÂÂÂ"},
   ]},
   { category:"Class Updates", messages:[
-    {id:"c1",label:"Class cancelled tonight",text:"Hi everyone â unfortunately tonight's class is cancelled due to [reason]. We'll be back on [next date] as normal. Apologies for the short notice and see you then! ð"},
-    {id:"c2",label:"Substitute teacher",text:"Quick heads up â tonight's class will be taught by [teacher name]. Leandro/Maria will be back next week. Enjoy the class! ð"},
-    {id:"c3",label:"Room change",text:"Hi all â small change tonight: we're in [room/studio] instead of the usual space. Same building, just head to [directions]. See you soon!"},
+    {id:"c1",label:"Class cancelled tonight",text:"Hi everyone Ã¢ÂÂ unfortunately tonight's class is cancelled due to [reason]. We'll be back on [next date] as normal. Apologies for the short notice and see you then! Ã°ÂÂÂ"},
+    {id:"c2",label:"Substitute teacher",text:"Quick heads up Ã¢ÂÂ tonight's class will be taught by [teacher name]. Leandro/Maria will be back next week. Enjoy the class! Ã°ÂÂÂ"},
+    {id:"c3",label:"Room change",text:"Hi all Ã¢ÂÂ small change tonight: we're in [room/studio] instead of the usual space. Same building, just head to [directions]. See you soon!"},
   ]},
   { category:"Events & Workshops", messages:[
-    {id:"e1",label:"Milonga this Saturday",text:"Milonga this Saturday! ð¶ Doors open at [time], DJ [name]. Entry is included with your subscription. Bring friends â it's going to be a great night. See you on the floor!"},
-    {id:"e2",label:"Workshop announcement",text:"Exciting news â we have a [topic] workshop coming up on [date] with [teacher]. It's perfect for [level] dancers. Spaces are limited so let me know if you'd like to join! Details: [link]"},
-    {id:"e3",label:"New term dates",text:"Hi everyone! New term starts [date]. Here's the full schedule:\n\n[Mon â Beginners 7pm / Intermediate 8pm]\n[Tue â ...]\n\nAll included in your subscription. See you there! ð"},
+    {id:"e1",label:"Milonga this Saturday",text:"Milonga this Saturday! Ã°ÂÂÂ¶ Doors open at [time], DJ [name]. Entry is included with your subscription. Bring friends Ã¢ÂÂ it's going to be a great night. See you on the floor!"},
+    {id:"e2",label:"Workshop announcement",text:"Exciting news Ã¢ÂÂ we have a [topic] workshop coming up on [date] with [teacher]. It's perfect for [level] dancers. Spaces are limited so let me know if you'd like to join! Details: [link]"},
+    {id:"e3",label:"New term dates",text:"Hi everyone! New term starts [date]. Here's the full schedule:\n\n[Mon Ã¢ÂÂ Beginners 7pm / Intermediate 8pm]\n[Tue Ã¢ÂÂ ...]\n\nAll included in your subscription. See you there! Ã°ÂÂÂ"},
   ]},
   { category:"Retention & Check-in", messages:[
-    {id:"r1",label:"We missed you",text:"Hi [name]! We haven't seen you in class for a little while â hope everything's OK. You're always welcome back whenever you're ready. If there's anything we can help with (different class time, catching up on what you missed), just let me know. Abrazos! ð¤"},
-    {id:"r2",label:"Level up suggestion",text:"Hi [name]! I wanted to let you know â your dancing has really come along and I think you'd enjoy our [next level] class. It runs on [day] at [time]. Want to give it a try next week? No pressure at all, just thought you'd enjoy the challenge! ðª"},
+    {id:"r1",label:"We missed you",text:"Hi [name]! We haven't seen you in class for a little while Ã¢ÂÂ hope everything's OK. You're always welcome back whenever you're ready. If there's anything we can help with (different class time, catching up on what you missed), just let me know. Abrazos! Ã°ÂÂ¤Â"},
+    {id:"r2",label:"Level up suggestion",text:"Hi [name]! I wanted to let you know Ã¢ÂÂ your dancing has really come along and I think you'd enjoy our [next level] class. It runs on [day] at [time]. Want to give it a try next week? No pressure at all, just thought you'd enjoy the challenge! Ã°ÂÂÂª"},
   ]},
 ];
 
@@ -408,7 +531,7 @@ const TODOS = [
   { id:3, text:"Confirm DJ for Saturday milonga", done:false },
 ];
 
-// ââ SVG ICONS (inline) ââ
+// Ã¢ÂÂÃ¢ÂÂ SVG ICONS (inline) Ã¢ÂÂÃ¢ÂÂ
 const SVG = {
   check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
   copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
@@ -423,7 +546,7 @@ const SVG = {
   trendDown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>',
 };
 
-// ââ HELPERS ââ
+// Ã¢ÂÂÃ¢ÂÂ HELPERS Ã¢ÂÂÃ¢ÂÂ
 function $(id) { return document.getElementById(id); }
 function copyText(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
@@ -432,13 +555,13 @@ function copyText(text, btn) {
   });
 }
 
-// ââ DATE ââ
+// Ã¢ÂÂÃ¢ÂÂ DATE Ã¢ÂÂÃ¢ÂÂ
 const today = new Date();
 const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 $('dateDisplay').textContent = `${days[today.getDay()]}, ${today.getDate()} ${months[today.getMonth()]} ${today.getFullYear()}`;
 
-// ââ STAT CARDS ââ
+// Ã¢ÂÂÃ¢ÂÂ STAT CARDS Ã¢ÂÂÃ¢ÂÂ
 function renderStats() {
   const s = STATS;
   const cards = [
@@ -462,13 +585,13 @@ function renderStats() {
   `).join('');
 }
 
-// ââ ANALYTICS CHART ââ
+// Ã¢ÂÂÃ¢ÂÂ ANALYTICS CHART Ã¢ÂÂÃ¢ÂÂ
 let analyticsChart = null;
 let currentMetric = 'sessions';
 const metricConfig = {
   sessions: { label:'Sessions', color:'#F9652B' },
   visitors: { label:'Visitors', color:'#60a5fa' },
-  revenue: { label:'Revenue (Â£)', color:'#22c55e' },
+  revenue: { label:'Revenue (ÃÂ£)', color:'#22c55e' },
 };
 
 function renderMetricBtns() {
@@ -477,7 +600,7 @@ function renderMetricBtns() {
   $('metricBtns').innerHTML = Object.entries(metricConfig).map(([key, val]) => {
     const active = key === currentMetric;
     return `<button class="metric-btn" style="background:${active ? val.color+'22' : '#111'};border:1px solid ${active ? val.color+'55' : '#2A2A2A'};color:${active ? val.color : '#888'}" onclick="switchMetric('${key}')">${val.label}</button>`;
-  }).join('') + `<div class="metric-total" style="color:${m.color}">Total: ${currentMetric==='revenue' ? 'Â£'+total.toLocaleString() : total.toLocaleString()}</div>`;
+  }).join('') + `<div class="metric-total" style="color:${m.color}">Total: ${currentMetric==='revenue' ? 'ÃÂ£'+total.toLocaleString() : total.toLocaleString()}</div>`;
 }
 
 function switchMetric(m) {
@@ -522,7 +645,7 @@ function initChart() {
         tooltip: {
           backgroundColor: '#222', titleColor: '#888', bodyColor: '#fff', borderColor: '#2A2A2A', borderWidth: 1,
           padding: 10, cornerRadius: 8, bodyFont: { weight: '700' },
-          callbacks: { label: ctx => currentMetric === 'revenue' ? 'Â£' + ctx.parsed.y.toLocaleString() : ctx.parsed.y.toLocaleString() }
+          callbacks: { label: ctx => currentMetric === 'revenue' ? 'ÃÂ£' + ctx.parsed.y.toLocaleString() : ctx.parsed.y.toLocaleString() }
         }
       },
       scales: {
@@ -534,14 +657,14 @@ function initChart() {
   });
 }
 
-// ââ SIGNUPS ââ
+// Ã¢ÂÂÃ¢ÂÂ SIGNUPS Ã¢ÂÂÃ¢ÂÂ
 let signupState = JSON.parse(JSON.stringify(SIGNUPS));
 let showContacted = false;
 
 function renderSignups() {
   const pending = signupState.filter(s => !s.contacted);
   const contacted = signupState.filter(s => s.contacted);
-  $('signupSubtitle').textContent = `${pending.length} still to contact${contacted.length > 0 ? ' Â· '+contacted.length+' contacted' : ''}`;
+  $('signupSubtitle').textContent = `${pending.length} still to contact${contacted.length > 0 ? ' ÃÂ· '+contacted.length+' contacted' : ''}`;
 
   if (pending.length === 0) {
     $('signupsList').innerHTML = '<div style="text-align:center;padding:20px 0;color:#22c55e;font-size:14px;font-weight:600">'+SVG.check+'<div>All caught up!</div></div>';
@@ -621,7 +744,7 @@ function toggleExpand(id) {
   renderSignups();
 }
 
-// ââ PAUSED MEMBERS ââ
+// Ã¢ÂÂÃ¢ÂÂ PAUSED MEMBERS Ã¢ÂÂÃ¢ÂÂ
 let pausedExpanded = null;
 
 function renderPaused() {
@@ -631,7 +754,7 @@ function renderPaused() {
 
   let html = '';
   if (urgent.length) {
-    html += '<div style="color:#fca5a5;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Paused 60+ days â consider reaching out</div>';
+    html += '<div style="color:#fca5a5;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Paused 60+ days Ã¢ÂÂ consider reaching out</div>';
     html += urgent.map(p => pausedCardHTML(p, true)).join('');
     html += '<div style="margin-bottom:12px"></div>';
   }
@@ -641,7 +764,7 @@ function renderPaused() {
 
 function pausedCardHTML(p, isUrgent) {
   const first = p.name.split(' ')[0];
-  const msg = `Hi ${first}! It's Leandro from London Tango Academy â hope you're doing well. I noticed your membership is on pause and just wanted to check in. Whenever you're ready to come back, we'd love to see you â your spot is always here. If there's anything I can help with (different class time, easing back in), just let me know. Abrazos! ð¤`;
+  const msg = `Hi ${first}! It's Leandro from London Tango Academy Ã¢ÂÂ hope you're doing well. I noticed your membership is on pause and just wanted to check in. Whenever you're ready to come back, we'd love to see you Ã¢ÂÂ your spot is always here. If there's anything I can help with (different class time, easing back in), just let me know. Abrazos! Ã°ÂÂ¤Â`;
   const exp = pausedExpanded === p.id;
   return `
     <div class="${isUrgent ? 'paused-urgent' : 'paused-recent'}">
@@ -650,7 +773,7 @@ function pausedCardHTML(p, isUrgent) {
           <div class="${isUrgent?'paused-avatar-red':'paused-avatar-amber'}">${p.name[0]}</div>
           <div>
             <div style="color:#fff;font-weight:600;font-size:14px">${p.name}</div>
-            <div style="color:${isUrgent?'#fca5a5':'#fcd34d'};font-size:12px">Paused ${p.daysPaused} days Â· since ${p.pausedSince}</div>
+            <div style="color:${isUrgent?'#fca5a5':'#fcd34d'};font-size:12px">Paused ${p.daysPaused} days ÃÂ· since ${p.pausedSince}</div>
           </div>
         </div>
         <span style="color:#888">${exp ? SVG.chevUp : SVG.chevDown}</span>
@@ -673,7 +796,7 @@ function pausedCardHTML(p, isUrgent) {
   `;
 }
 
-// ââ QUICK MESSAGES ââ
+// Ã¢ÂÂÃ¢ÂÂ QUICK MESSAGES Ã¢ÂÂÃ¢ÂÂ
 let openCat = null;
 let editingMsg = null;
 let msgState = JSON.parse(JSON.stringify(QUICK_MESSAGES));
@@ -723,7 +846,7 @@ function saveMsg(ci, msgId) {
   renderQuickMessages();
 }
 
-// ââ TODO LIST ââ
+// Ã¢ÂÂÃ¢ÂÂ TODO LIST Ã¢ÂÂÃ¢ÂÂ
 let todoState = JSON.parse(JSON.stringify(TODOS));
 
 function renderTodos() {
@@ -753,7 +876,7 @@ function addTodo() {
 $('todoAddBtn').addEventListener('click', addTodo);
 $('todoInput').addEventListener('keydown', e => { if (e.key === 'Enter') addTodo(); });
 
-// ââ INIT ââ
+// Ã¢ÂÂÃ¢ÂÂ INIT Ã¢ÂÂÃ¢ÂÂ
 renderStats();
 renderMetricBtns();
 initChart();
@@ -765,6 +888,7 @@ renderTodos();
 // Load live data from Wix API (replaces placeholder data)
 loadLiveData();
 loadAnalytics();
+loadDiary();
 </script>
 </body>
 </html>
