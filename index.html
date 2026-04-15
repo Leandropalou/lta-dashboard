@@ -749,22 +749,30 @@ function toggleExpand(id) {
 
 // ââ PAUSED MEMBERS ââ
 let pausedExpanded = null;
+let pausedCollapsed = true;
 
 function renderPaused() {
-  $('pausedSubtitle').textContent = `${PAUSED.length} members on pause`;
-  const urgent = PAUSED.filter(p => p.daysPaused >= 60);
-  const recent = PAUSED.filter(p => p.daysPaused < 60);
-
-  let html = '';
+  $('pausedSubtitle').textContent = PAUSED.length + ' members on pause';
+  var urgent = PAUSED.filter(function(p) { return p.daysPaused >= 60; });
+  var recent = PAUSED.filter(function(p) { return p.daysPaused < 60; });
+  var allCards = [];
   if (urgent.length) {
-    html += '<div style="color:#fca5a5;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Paused 60+ days â consider reaching out</div>';
-    html += urgent.map(p => pausedCardHTML(p, true)).join('');
-    html += '<div style="margin-bottom:12px"></div>';
+    allCards.push('<div style="color:#fca5a5;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Paused 60+ days \u2013 consider reaching out</div>');
+    urgent.forEach(function(p) { allCards.push(pausedCardHTML(p, true)); });
+    allCards.push('<div style="margin-bottom:12px"></div>');
   }
-  html += recent.map(p => pausedCardHTML(p, false)).join('');
-  $('pausedList').innerHTML = html;
+  recent.forEach(function(p) { allCards.push(pausedCardHTML(p, false)); });
+  var total = PAUSED.length;
+  var LIMIT = 5;
+  if (total > LIMIT && pausedCollapsed) {
+    var shown = allCards.slice(0, LIMIT).join('');
+    var remaining = total - LIMIT;
+    $('pausedList').innerHTML = shown + '<div style="text-align:center;padding:10px 0"><button onclick="pausedCollapsed=false;renderPaused()" style="background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);color:#eab308;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Show all ' + total + ' paused members (' + remaining + ' more)</button></div>';
+  } else {
+    var btn = total > LIMIT ? '<div style="text-align:center;padding:10px 0"><button onclick="pausedCollapsed=true;renderPaused()" style="background:rgba(234,179,8,0.1);border:1px solid rgba(234,179,8,0.3);color:#eab308;border-radius:8px;padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit">Collapse list</button></div>' : '';
+    $('pausedList').innerHTML = allCards.join('') + btn;
+  }
 }
-
 function pausedCardHTML(p, isUrgent) {
   const first = p.name.split(' ')[0];
   const msg = `Hi ${first}! It's Leandro from London Tango Academy â hope you're doing well. I noticed your membership is on pause and just wanted to check in. Whenever you're ready to come back, we'd love to see you â your spot is always here. If there's anything I can help with (different class time, easing back in), just let me know. Abrazos! ð¤`;
