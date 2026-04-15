@@ -93,7 +93,7 @@
     <div class="logo-area">
       <img src="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_400,h_280,al_c,q_85,usm_0.66_1.00_0.01,enc_auto,quality_auto/logo.png" alt="London Tango Academy" />
       <div class="logo-divider"></div>
-      <div class="logo-label">Dashboard</div>
+      <div class="logo-label">Dashboard <span id="liveBadge" style="font-size:9px;padding:2px 6px;border-radius:4px;margin-left:6px;background:rgba(249,101,43,0.15);color:#F9652B;letter-spacing:1px">LOADING</span></div>
     </div>
     <div class="date-text" id="dateDisplay"></div>
   </div>
@@ -190,44 +190,741 @@
 </div>
 
 <script>
-// ââ DATA ââ
-const STATS = { totalSubscribers: 127, newThisWeek: 5, cancellationsThisWeek: 2, pausedTotal: 27, netChange: 3 };
+// ââ LIVE DATA (populated by API) ââ
+let STATS = { totalSubscribers: '...', newThisWeek: '...', cancellationsThisWeek: '...', pausedTotal: '...', netChange: '...' };
+let SIGNUPS = [];
+let PAUSED = [];
+let ANALYTICS = []; // Analytics loaded separately if available
 
-const SIGNUPS = [
-  { id:1, name:"Sophie Chen", type:"Paid â Beginner", date:"Today, 9:14am", daysAgo:0, phone:"+44 7700 900123", email:"sophie.c@email.com", contacted:false },
-  { id:2, name:"Marco Rossi", type:"Paid â Intermediate", date:"Today, 11:02am", daysAgo:0, phone:"+44 7700 900456", email:"marco.r@email.com", contacted:false },
-  { id:3, name:"Emma Taylor", type:"Newsletter", date:"Yesterday, 4:15pm", daysAgo:1, phone:null, email:"emma.t@email.com", contacted:false },
-  { id:4, name:"James Wright", type:"Paid â Beginner", date:"2 days ago", daysAgo:2, phone:"+44 7700 900789", email:"james.w@email.com", contacted:false },
-  { id:5, name:"Ana Petrova", type:"Paid â Intermediate", date:"3 days ago", daysAgo:3, phone:"+44 7700 900321", email:"ana.p@email.com", contacted:true },
+// ââ API FETCH ââ
+const API_BASE = window.location.origin;
+
+function formatDate(isoStr) {
+  const d = new Date(isoStr);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    return 'Today, ' + d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+  } else if (diffDays === 1) {
+    return 'Yesterday, ' + d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+  } else {
+    return `${diffDays} days ago`;
+  }
+}
+
+function formatPauseDate(isoStr) {
+  const d = new Date(isoStr);
+  return d.toISOString().split('T')[0];
+}
+
+async function loadLiveData() {
+  try {
+    // 1. Fetch orders data
+    const ordersRes = await fetch(`${API_BASE}/api/orders`);
+    if (!ordersRes.ok) throw new Error('Orders API failed');
+    const ordersData = await ordersRes.json();
+
+    // 2. Resolve contact names
+    let contacts = {};
+    if (ordersData.contactIds && ordersData.contactIds.length > 0) {
+      const contactsRes = await fetch(`${API_BASE}/api/contacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: ordersData.contactIds }),
+      });
+      if (contactsRes.ok) {
+        const cData = await contactsRes.json();
+        contacts = cData.contacts || {};
+      }
+    }
+
+    // 3. Update STATS
+    STATS = {
+      totalSubscribers: ordersData.stats.totalActive,
+      newThisWeek: ordersData.stats.newThisWeek,
+      cancellationsThisWeek: ordersData.stats.cancellationsThisWeek,
+      pausedTotal: ordersData.stats.pausedTotal,
+      netChange: ordersData.stats.netChange,
+    };
+
+    // 4. Build SIGNUPS from recent orders + contact info
+    SIGNUPS = ordersData.recentSignups.map((s, i) => {
+      const c = contacts[s.contactId] || {};
+      const daysAgo = Math.floor((Date.now() - new Date(s.createdDate)) / (1000*60*60*24));
+      return {
+        id: i + 1,
+        name: c.name || 'Loading...',
+        type: s.planName || 'Membership',
+        date: formatDate(s.createdDate),
+        daysAgo,
+        phone: c.phone || null,
+        email: c.email || null,
+        contacted: false,
+      };
+    });
+
+    // 5. Build PAUSED from paused orders + contact info
+    PAUSED = ordersData.pausedList.map((p, i) => {
+      const c = contacts[p.contactId] || {};
+      return {
+        id: i + 1,
+        name: c.name || 'Loading...',
+        pausedSince: formatPauseDate(p.pausedSince),
+        subscribedSince: formatPauseDate(p.subscribedSince),
+        daysPaused: p.daysPaused,
+        phone: c.phone || null,
+        email: c.email || null,
+      };
+    });
+
+    // 6. Re-render everything with live data
+    renderStats();
+    renderSignups();
+    renderPaused();
+
+    // Update loading indicator
+    const badge = document.getElementById('liveBadge');
+    if (badge) { badge.textContent = 'LIVE'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = '#22c55e'; }
+
+  } catch (err) {
+    console.error('Failed to load live data:', err);
+    // Show error state
+    const badge = document.getElementById('liveBadge');
+    if (badge) { badge.textContent = 'OFFLINE'; badge.style.background = 'rgba(239,68,68,0.15)'; badge.style.color = '#ef4444'; }
+  }
+}
+
+const WELCOME = {
+  "Paid â Beginner": n => `Hi ${n}, it's Leandro from London Tango Academy â welcome! Really glad you've joined us for your first tango steps ð Your classes are at 9 Endell Street, Covent Garden. Wear something comfortable you can move in, and smooth-soled shoes if you have them. Any questions, just message me here. Looking forward to meeting you!`,
+  "Paid â Intermediate": n => `Hi ${n}, Leandro here from London Tango Academy â really pleased to have you with us. Your subscription is all set up. I'll add you to the class WhatsApp group so you'll see updates and workshop announcements there. See you on the floor! ð`,
+  "Newsletter": n => `Hi ${n}, Leandro from London Tango Academy â thanks for signing up for our updates! You'll hear from us with news on classes, milongas, and guest teachers. If there's anything specific you'd like to hear about, just reply here. Abrazos, Leandro & Maria`,
+};
+
+const QUICK_MESSAGES = [
+  { category:"Welcome & Onboarding", messages:[
+    {id:"w1",label:"First class reminder",text:"Hi! Just a quick reminder â your first class is tomorrow. We're at 9 Endell Street, Covent Garden (basement studio). Arrive 5 mins early so we can say hello. Wear comfortable clothes and smooth-soled shoes if you have them. See you there! ð"},
+    {id:"w2",label:"Post first class",text:"Hi! It was great to meet you today â well done on your first class! Remember, tango is a journey and everyone starts exactly where you are now. See you next week, and message me here if you have any questions. ð"},
+  ]},
+  { category:"Class Updates", messages:[
+    {id:"c1",label:"Class cancelled tonight",text:"Hi everyone â unfortunately tonight's class is cancelled due to [reason]. We'll be back on [next date] as normal. Apologies for the short notice and see you then! ð"},
+    {id:"c2",label:"Substitute teacher",text:"Quick heads up â tonight's class will be taught by [teacher name]. Leandro/Maria will be back next week. Enjoy the class! ð"},
+    {id:"c3",label:"Room change",text:"Hi all â small change tonight: we're in [room/studio] instead of the usual space. Same building, just head to [directions]. See you soon!"},
+  ]},
+  { category:"Events & Workshops", messages:[
+    {id:"e1",label:"Milonga this Saturday",text:"Milonga this Saturday! ð¶ Doors open at [time], DJ [name]. Entry is included with your subscription. Bring friends â it's going to be a great night. See you on the floor!"},
+    {id:"e2",label:"Workshop announcement",text:"Exciting news â we have a [topic] workshop coming up on [date] with [teacher]. It's perfect for [level] dancers. Spaces are limited so let me know if you'd like to join! Details: [link]"},
+    {id:"e3",label:"New term dates",text:"Hi everyone! New term starts [date]. Here's the full schedule:\n\n[Mon â Beginners 7pm / Intermediate 8pm]\n[Tue â ...]\n\nAll included in your subscription. See you there! ð"},
+  ]},
+  { category:"Retention & Check-in", messages:[
+    {id:"r1",label:"We missed you",text:"Hi [name]! We haven't seen you in class for a little while â hope everything's OK. You're always welcome back whenever you're ready. If there's anything we can help with (different class time, catching up on what you missed), just let me know. Abrazos! ð¤"},
+    {id:"r2",label:"Level up suggestion",text:"Hi [name]! I wanted to let you know â your dancing has really come along and I think you'd enjoy our [next level] class. It runs on [day] at [time]. Want to give it a try next week? No pressure at all, just thought you'd enjoy the challenge! ðª"},
+  ]},
 ];
 
-const PAUSED = [
-  { id:1, name:"Rachel Adams", pausedSince:"2026-04-01", subscribedSince:"2025-11-27", daysPaused:13, phone:"+44 7700 900111", email:"rachel.a@email.com" },
-  { id:2, name:"Tom Chen", pausedSince:"2026-03-24", subscribedSince:"2026-03-01", daysPaused:21, phone:"+44 7700 900222", email:"tom.c@email.com" },
-  { id:3, name:"Laura Martinez", pausedSince:"2026-03-05", subscribedSince:"2026-01-06", daysPaused:40, phone:"+44 7700 900333", email:"laura.m@email.com" },
-  { id:4, name:"David Kim", pausedSince:"2026-02-26", subscribedSince:"2026-01-29", daysPaused:47, phone:"+44 7700 900444", email:"david.k@email.com" },
-  { id:5, name:"Sarah Wilson", pausedSince:"2025-12-19", subscribedSince:"2025-09-15", daysPaused:116, phone:"+44 7700 900555", email:"sarah.w@email.com" },
-  { id:6, name:"Mike O'Brien", pausedSince:"2025-12-19", subscribedSince:"2025-08-01", daysPaused:116, phone:"+44 7700 900666", email:"mike.o@email.com" },
+const TODOS = [
+  { id:1, text:"Review new signups and send welcome messages", done:false },
+  { id:2, text:"Post after-class summary to Beginners group", done:false },
+  { id:3, text:"Confirm DJ for Saturday milonga", done:false },
 ];
 
-const ANALYTICS = [
-  {date:"Mar 14",sessions:21,visitors:18,revenue:801},{date:"Mar 15",sessions:22,visitors:21,revenue:216},
-  {date:"Mar 16",sessions:16,visitors:13,revenue:445},{date:"Mar 17",sessions:10,visitors:9,revenue:216},
-  {date:"Mar 18",sessions:12,visitors:9,revenue:282},{date:"Mar 19",sessions:15,visitors:14,revenue:134},
-  {date:"Mar 20",sessions:14,visitors:12,revenue:534},{date:"Mar 21",sessions:13,visitors:12,revenue:267},
-  {date:"Mar 22",sessions:16,visitors:11,revenue:127},{date:"Mar 23",sessions:14,visitors:14,revenue:569},
-  {date:"Mar 24",sessions:15,visitors:14,revenue:405},{date:"Mar 25",sessions:32,visitors:24,revenue:445},
-  {date:"Mar 26",sessions:60,visitors:43,revenue:297},{date:"Mar 27",sessions:24,visitors:21,revenue:267},
-  {date:"Mar 28",sessions:16,visitors:16,revenue:564},{date:"Mar 29",sessions:20,visitors:15,revenue:89},
-  {date:"Mar 30",sessions:27,visitors:26,revenue:216},{date:"Mar 31",sessions:22,visitors:18,revenue:0},
-  {date:"Apr 1",sessions:17,visitors:14,revenue:1589},{date:"Apr 2",sessions:29,visitors:26,revenue:707},
-  {date:"Apr 3",sessions:39,visitors:30,revenue:89},{date:"Apr 4",sessions:27,visitors:23,revenue:394},
-  {date:"Apr 5",sessions:33,visitors:27,revenue:216},{date:"Apr 6",sessions:28,visitors:26,revenue:483},
-  {date:"Apr 7",sessions:26,visitors:20,revenue:460},{date:"Apr 8",sessions:34,visitors:25,revenue:60},
-  {date:"Apr 9",sessions:121,visitors:78,revenue:844},{date:"Apr 10",sessions:45,visitors:35,revenue:677},
-  {date:"Apr 11",sessions:26,visitors:20,revenue:341},{date:"Apr 12",sessions:28,visitors:18,revenue:250},
-  {date:"Apr 13",sessions:28,visitors:24,revenue:286},
-];
+// ââ SVG ICONS (inline) ââ
+const SVG = {
+  check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+  copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>',
+  chevDown: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>',
+  chevUp: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>',
+  send: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>',
+  pencil: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>',
+  save: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  x: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>',
+  trash: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>',
+  trendUp: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>',
+  trendDown: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg>',
+};
+
+// ââ HELPERS ââ
+function $(id) { return document.getElementById(id); }
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.innerHTML = SVG.check + ' Copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.innerHTML = SVG.copy + ' Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+// ââ DATE ââ
+const today = new Date();
+const days = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+$('dateDisplay').textContent = `${days[today.getDay()]}, ${today.getDate()} ${months[today.getMonth()]} ${today.getFullYear()}`;
+
+// ââ STAT CARDS ââ
+function renderStats() {
+  const s = STATS;
+  const cards = [
+    { icon:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>', label:'Total', value:s.totalSubscribers, color:'#F9652B' },
+    { icon:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/>', label:'New', value:s.newThisWeek, trend:'+2', up:true, color:'#F9652B' },
+    { icon:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="22" x2="16" y1="11" y2="11"/>', label:'Cancelled', value:s.cancellationsThisWeek, trend:'-1', up:true, color:'#F9652B' },
+    { icon:'<circle cx="12" cy="12" r="10"/><line x1="10" x2="10" y1="15" y2="9"/><line x1="14" x2="14" y1="15" y2="9"/>', label:'Paused', value:s.pausedTotal, color:'#eab308' },
+    { icon:'<path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/>', label:'Net', value:s.netChange > 0 ? '+'+s.netChange : s.netChange, trend:'+1', up:s.netChange>0, color:'#F9652B' },
+  ];
+  $('statsRow').innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="stat-icon-row">
+        <div class="stat-icon-bg" style="background:${c.color}22">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${c.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${c.icon}</svg>
+        </div>
+        <span class="stat-label">${c.label}</span>
+      </div>
+      <div class="stat-value">${c.value}</div>
+      ${c.trend ? `<div class="stat-trend" style="color:${c.up?'#22c55e':'#ef4444'}">${c.up?SVG.trendUp:SVG.trendDown}<span>${c.trend} vs last week</span></div>` : ''}
+    </div>
+  `).join('');
+}
+
+// ââ ANALYTICS CHART ââ
+let analyticsChart = null;
+let currentMetric = 'sessions';
+const metricConfig = {
+  sessions: { label:'Sessions', color:'#F9652B' },
+  visitors: { label:'Visitors', color:'#60a5fa' },
+  revenue: { label:'Revenue (Â£)', color:'#22c55e' },
+};
+
+function renderMetricBtns() {
+  const total = ANALYTICS.reduce((s,d) => s + d[currentMetric], 0);
+  const m = metricConfig[currentMetric];
+  $('metricBtns').innerHTML = Object.entries(metricConfig).map(([key, val]) => {
+    const active = key === currentMetric;
+    return `<button class="metric-btn" style="background:${active ? val.color+'22' : '#111'};border:1px solid ${active ? val.color+'55' : '#2A2A2A'};color:${active ? val.color : '#888'}" onclick="switchMetric('${key}')">${val.label}</button>`;
+  }).join('') + `<div class="metric-total" style="color:${m.color}">Total: ${currentMetric==='revenue' ? 'Â£'+total.toLocaleString() : total.toLocaleString()}</div>`;
+}
+
+function switchMetric(m) {
+  currentMetric = m;
+  renderMetricBtns();
+  updateChart();
+}
+
+function updateChart() {
+  const m = metricConfig[currentMetric];
+  if (analyticsChart) {
+    analyticsChart.data.datasets[0].data = ANALYTICS.map(d => d[currentMetric]);
+    analyticsChart.data.datasets[0].borderColor = m.color;
+    analyticsChart.data.datasets[0].backgroundColor = m.color + '30';
+    analyticsChart.update();
+  }
+}
+
+function initChart() {
+  const m = metricConfig[currentMetric];
+  const ctx = $('analyticsChart').getContext('2d');
+  analyticsChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ANALYTICS.map(d => d.date),
+      datasets: [{
+        data: ANALYTICS.map(d => d[currentMetric]),
+        borderColor: m.color,
+        backgroundColor: m.color + '30',
+        fill: true,
+        tension: 0.35,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        pointHoverBackgroundColor: m.color,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: {
+          backgroundColor: '#222', titleColor: '#888', bodyColor: '#fff', borderColor: '#2A2A2A', borderWidth: 1,
+          padding: 10, cornerRadius: 8, bodyFont: { weight: '700' },
+          callbacks: { label: ctx => currentMetric === 'revenue' ? 'Â£' + ctx.parsed.y.toLocaleString() : ctx.parsed.y.toLocaleString() }
+        }
+      },
+      scales: {
+        x: { grid: { color: '#22222266', drawBorder: false }, ticks: { color: '#888', font: { size: 10 }, maxTicksLimit: 7 } },
+        y: { grid: { color: '#22222266', drawBorder: false }, ticks: { color: '#888', font: { size: 10 } } }
+      },
+      interaction: { intersect: false, mode: 'index' },
+    }
+  });
+}
+
+// ââ SIGNUPS ââ
+let signupState = JSON.parse(JSON.stringify(SIGNUPS));
+let showContacted = false;
+
+function renderSignups() {
+  const pending = signupState.filter(s => !s.contacted);
+  const contacted = signupState.filter(s => s.contacted);
+  $('signupSubtitle').textContent = `${pending.length} still to contact${contacted.length > 0 ? ' Â· '+contacted.length+' contacted' : ''}`;
+
+  if (pending.length === 0) {
+    $('signupsList').innerHTML = '<div style="text-align:center;padding:20px 0;color:#22c55e;font-size:14px;font-weight:600">'+SVG.check+'<div>All caught up!</div></div>';
+  } else {
+    $('signupsList').innerHTML = pending.map(s => signupCardHTML(s)).join('');
+  }
+
+  if (contacted.length > 0) {
+    $('contactedSection').innerHTML = `
+      <div class="contacted-toggle" onclick="showContacted=!showContacted;renderSignups()">
+        <span style="color:#888;font-size:13px;font-weight:500">${SVG.send} ${contacted.length} already contacted</span>
+        <span style="color:#888">${showContacted ? SVG.chevUp : SVG.chevDown}</span>
+      </div>
+      ${showContacted ? '<div style="margin-top:8px">'+contacted.map(s => signupCardHTML(s)).join('')+'</div>' : ''}
+    `;
+  } else {
+    $('contactedSection').innerHTML = '';
+  }
+}
+
+function signupCardHTML(s) {
+  const isPaid = s.type.startsWith('Paid');
+  const first = s.name.split(' ')[0];
+  const msg = WELCOME[s.type] ? WELCOME[s.type](first) : '';
+  const expanded = s._expanded;
+  return `
+    <div class="signup-card" style="background:${s.contacted?'#111':'#1A1A1A'};border:1px solid ${s.contacted?'#1a1a1a':'#2A2A2A'};opacity:${s.contacted?0.55:1}">
+      <div class="signup-row">
+        <div class="checkbox ${s.contacted?'checked':''}" onclick="toggleContacted(${s.id})">
+          ${s.contacted ? '<span style="color:#fff">'+SVG.check+'</span>' : ''}
+        </div>
+        <div style="flex:1;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="toggleExpand(${s.id})">
+          <div style="display:flex;align-items:center;gap:12px">
+            <div class="avatar" style="background:${s.contacted?'#333':(isPaid?'#F9652B':'#2A2A2A')}">
+              ${s.contacted ? SVG.send : s.name[0]}
+            </div>
+            <div>
+              <div style="color:${s.contacted?'#888':'#fff'};font-weight:600;font-size:14px;text-decoration:${s.contacted?'line-through':'none'}">${s.name}</div>
+              <div style="color:#888;font-size:12px;margin-top:2px">
+                <span class="badge" style="background:${s.contacted?'#222':(isPaid?'#F9652B33':'#2A2A2A')};color:${s.contacted?'#555':(isPaid?'#F9652B':'#888')}">${s.type}</span>
+                ${s.date}
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            ${!s.contacted && s.daysAgo > 0 ? `<span class="urgency-badge" style="background:${s.daysAgo>=2?'#7f1d1d':'#78350f'};color:${s.daysAgo>=2?'#fca5a5':'#fcd34d'}">${s.daysAgo}d ago</span>` : ''}
+            <span style="color:#888">${expanded ? SVG.chevUp : SVG.chevDown}</span>
+          </div>
+        </div>
+      </div>
+      ${expanded ? `
+        <div class="expand-area">
+          <div class="contact-info">
+            ${s.phone ? `<span>Phone: <span class="val">${s.phone}</span></span>` : ''}
+            <span>Email: <span class="val">${s.email}</span></span>
+          </div>
+          <div class="draft-box">
+            <div class="draft-label">Draft WhatsApp message</div>
+            <div class="draft-text">${msg}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button class="btn-copy" onclick="copyText(\`${msg.replace(/`/g,'\\`').replace(/\\/g,'\\\\')}\`, this)">${SVG.copy} Copy</button>
+            ${!s.contacted ? `<button class="btn-mark" onclick="toggleContacted(${s.id})">${SVG.check} Mark contacted</button>` : ''}
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function toggleContacted(id) {
+  signupState = signupState.map(s => s.id === id ? {...s, contacted: !s.contacted} : s);
+  renderSignups();
+}
+function toggleExpand(id) {
+  signupState = signupState.map(s => s.id === id ? {...s, _expanded: !s._expanded} : s);
+  renderSignups();
+}
+
+// ââ PAUSED MEMBERS ââ
+let pausedExpanded = null;
+
+function renderPaused() {
+  $('pausedSubtitle').textContent = `${PAUSED.length} members on pause`;
+  const urgent = PAUSED.filter(p => p.daysPaused >= 60);
+  const recent = PAUSED.filter(p => p.daysPaused < 60);
+
+  let html = '';
+  if (urgent.length) {
+    html += '<div style="color:#fca5a5;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Paused 60+ days â consider reaching out</div>';
+    html += urgent.map(p => pausedCardHTML(p, true)).join('');
+    html += '<div style="margin-bottom:12px"></div>';
+  }
+  html += recent.map(p => pausedCardHTML(p, false)).join('');
+  $('pausedList').innerHTML = html;
+}
+
+function pausedCardHTML(p, isUrgent) {
+  const first = p.name.split(' ')[0];
+  const msg = `Hi ${first}! It's Leandro from London Tango Academy â hope you're doing well. I noticed your membership is on pause and just wanted to check in. Whenever you're ready to come back, we'd love to see you â your spot is always here. If there's anything I can help with (different class time, easing back in), just let me know. Abrazos! ð¤`;
+  const exp = pausedExpanded === p.id;
+  return `
+    <div class="${isUrgent ? 'paused-urgent' : 'paused-recent'}">
+      <div style="cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="pausedExpanded=${exp?'null':p.id};renderPaused()">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="${isUrgent?'paused-avatar-red':'paused-avatar-amber'}">${p.name[0]}</div>
+          <div>
+            <div style="color:#fff;font-weight:600;font-size:14px">${p.name}</div>
+            <div style="color:${isUrgent?'#fca5a5':'#fcd34d'};font-size:12px">Paused ${p.daysPaused} days Â· since ${p.pausedSince}</div>
+          </div>
+        </div>
+        <span style="color:#888">${exp ? SVG.chevUp : SVG.chevDown}</span>
+      </div>
+      ${exp ? `
+        <div style="margin-top:10px;padding-top:10px;border-top:1px solid ${isUrgent?'#7f1d1d':'#2A2A2A'}">
+          <div class="contact-info" style="margin-bottom:10px">
+            ${p.phone ? `<span>Phone: <span class="val">${p.phone}</span></span>` : ''}
+            <span>Email: <span class="val">${p.email}</span></span>
+            <span>Member since: <span class="val">${p.subscribedSince}</span></span>
+          </div>
+          <div style="background:#111;border-radius:8px;padding:12px;margin-bottom:10px">
+            <div class="draft-label">Check-in message</div>
+            <div class="draft-text">${msg}</div>
+          </div>
+          <button class="btn-copy" onclick="copyText(\`${msg.replace(/`/g,'\\`').replace(/\\/g,'\\\\')}\`, this)">${SVG.copy} Copy</button>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+// ââ QUICK MESSAGES ââ
+let openCat = null;
+let editingMsg = null;
+let msgState = JSON.parse(JSON.stringify(QUICK_MESSAGES));
+
+function renderQuickMessages() {
+  $('quickMessages').innerHTML = msgState.map((cat, ci) => {
+    const isOpen = openCat === ci;
+    return `
+      <div class="cat-btn ${isOpen?'open':''}" onclick="openCat=${isOpen?'null':ci};renderQuickMessages()">
+        <span style="color:${isOpen?'#F9652B':'#ccc'};font-weight:600;font-size:14px">${cat.category}</span>
+        <span style="color:#888;font-size:12px">${cat.messages.length} messages</span>
+      </div>
+      ${isOpen ? '<div style="padding:4px 0 6px">' + cat.messages.map(msg => {
+        const isEditing = editingMsg === msg.id;
+        return `
+          <div class="msg-card">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:10px">
+              <span style="color:#fff;font-weight:600;font-size:13px">${msg.label}</span>
+              <div style="display:flex;gap:6px;flex-shrink:0">
+                ${isEditing ? `
+                  <button class="btn-save" onclick="saveMsg(${ci},'${msg.id}')">Save</button>
+                  <button class="btn-cancel" onclick="editingMsg=null;renderQuickMessages()">Cancel</button>
+                ` : `
+                  <button class="btn-edit" onclick="startEditMsg('${msg.id}','${ci}')">${SVG.pencil} Edit</button>
+                  <button class="btn-copy" onclick="copyText(\`${msg.text.replace(/`/g,'\\`').replace(/\\/g,'\\\\')}\`, this)">${SVG.copy} Copy</button>
+                `}
+              </div>
+            </div>
+            ${isEditing ? `<textarea class="msg-edit-area" id="editArea">${msg.text}</textarea>` : `<div style="color:#aaa;font-size:13px;line-height:1.55;white-space:pre-wrap">${msg.text}</div>`}
+          </div>
+        `;
+      }).join('') + '</div>' : ''}
+    `;
+  }).join('');
+}
+
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LTA Dashboard â London Tango Academy</title>
+  <link rel="icon" href="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_64,h_45,al_c,q_85,enc_auto,quality_auto/logo.png" />
+  <link rel="apple-touch-icon" href="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_180,h_126,al_c,q_85,enc_auto,quality_auto/logo.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LTA Dashboard" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root { --orange: #F9652B; --dark: #0D0D0D; --card: #1A1A1A; --border: #2A2A2A; --muted: #888888; }
+    body { background: var(--dark); color: #fff; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    button { font-family: inherit; }
+    .header { background: linear-gradient(135deg, var(--card) 0%, #1f1610 100%); border-bottom: 1px solid var(--border); padding: 16px 20px; }
+    .header-inner { max-width: 800px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .logo-area { display: flex; align-items: center; gap: 14px; }
+    .logo-area img { height: 64px; width: auto; object-fit: contain; }
+    .logo-divider { width: 1px; height: 40px; background: var(--border); opacity: 0.5; }
+    .logo-label { color: var(--orange); font-size: 11px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; }
+    .date-text { color: var(--muted); font-size: 13px; text-align: right; }
+    .main { max-width: 800px; margin: 0 auto; padding: 20px 16px 40px; }
+    .section-title { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+    .section-bar { width: 4px; height: 18px; border-radius: 2px; background: var(--orange); }
+    .section-label { color: #fff; font-weight: 700; font-size: 15px; text-transform: uppercase; letter-spacing: 1px; }
+    .stats-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 20px; }
+    .stat-card { background: var(--card); border-radius: 14px; padding: 20px 18px; flex: 1 1 140px; min-width: 140px; border: 1px solid var(--border); }
+    .stat-icon-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+    .stat-icon-bg { border-radius: 8px; padding: 6px; display: flex; align-items: center; justify-content: center; }
+    .stat-label { color: var(--muted); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-value { font-size: 32px; font-weight: 700; color: #fff; line-height: 1.1; }
+    .stat-trend { display: flex; align-items: center; gap: 4px; margin-top: 6px; font-size: 12px; }
+    .widget { background: var(--card); border-radius: 16px; padding: 20px; border: 1px solid var(--border); margin-bottom: 20px; }
+    .widget-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+    .widget-icon-bg { border-radius: 10px; padding: 8px; display: flex; align-items: center; justify-content: center; }
+    .widget-title { color: #fff; font-weight: 700; font-size: 16px; }
+    .widget-subtitle { color: var(--muted); font-size: 12px; margin-top: 1px; }
+    .metric-btns { display: flex; gap: 6px; margin-bottom: 14px; flex-wrap: wrap; }
+    .metric-btn { border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+    .metric-total { margin-left: auto; font-size: 14px; font-weight: 700; }
+    .chart-wrap { width: 100%; height: 220px; position: relative; }
+    .signup-card { border-radius: 12px; overflow: hidden; transition: all 0.3s; margin-bottom: 8px; }
+    .signup-row { padding: 14px 16px; display: flex; align-items: center; gap: 10px; }
+    .checkbox { width: 24px; height: 24px; border-radius: 7px; border: 2px solid var(--muted); background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .checkbox.checked { border-color: #22c55e; background: #22c55e; }
+    .avatar { width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 15px; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; margin-right: 8px; display: inline-block; }
+    .urgency-badge { font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .expand-area { padding: 0 16px 16px; border-top: 1px solid var(--border); }
+    .contact-info { display: flex; gap: 16px; font-size: 12px; color: var(--muted); padding: 12px 0 10px; flex-wrap: wrap; }
+    .contact-info span.val { color: #fff; }
+    .draft-box { background: #111; border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+    .draft-label { color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; margin-bottom: 8px; letter-spacing: 0.5px; }
+    .draft-text { color: #ddd; font-size: 13px; line-height: 1.55; white-space: pre-wrap; }
+    .btn-copy { background: var(--orange); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; transition: background 0.2s; white-space: nowrap; }
+    .btn-copy.copied { background: #22c55e; }
+    .btn-mark { background: transparent; color: #22c55e; border: 1px solid #22c55e44; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-edit { background: #222; color: var(--muted); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-save { background: #22c55e; color: #fff; border: none; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .btn-cancel { background: #333; color: var(--muted); border: none; border-radius: 8px; padding: 8px 12px; font-size: 12px; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+    .contacted-toggle { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-radius: 10px; cursor: pointer; background: #111; border: 1px solid var(--border); margin-top: 12px; }
+    .paused-urgent { background: #1c1111; border-radius: 10px; border: 1px solid #7f1d1d; padding: 12px 14px; margin-bottom: 6px; }
+    .paused-recent { background: #111; border-radius: 10px; border: 1px solid var(--border); padding: 12px 14px; margin-bottom: 6px; }
+    .paused-avatar-red { width: 34px; height: 34px; border-radius: 50%; background: #7f1d1d; display: flex; align-items: center; justify-content: center; color: #fca5a5; font-weight: 700; font-size: 13px; }
+    .paused-avatar-amber { width: 34px; height: 34px; border-radius: 50%; background: #78350f; display: flex; align-items: center; justify-content: center; color: #fcd34d; font-weight: 700; font-size: 13px; }
+    .cat-btn { padding: 12px 14px; border-radius: 10px; cursor: pointer; border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; transition: all 0.2s; background: #111; margin-bottom: 6px; }
+    .cat-btn.open { background: rgba(249,101,43,0.08); border-color: rgba(249,101,43,0.27); }
+    .msg-card { background: #111; border-radius: 10px; padding: 14px; border: 1px solid var(--border); margin-bottom: 8px; }
+    .msg-edit-area { width: 100%; min-height: 100px; background: var(--dark); border: 1px solid rgba(249,101,43,0.33); border-radius: 8px; padding: 12px; color: #fff; font-size: 13px; line-height: 1.55; resize: vertical; outline: none; font-family: inherit; }
+    .todo-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #111; border-radius: 10px; border: 1px solid var(--border); margin-bottom: 6px; transition: opacity 0.2s; }
+    .todo-item.done { opacity: 0.5; }
+    .todo-checkbox { width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--muted); background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .todo-checkbox.checked { border-color: #22c55e; background: #22c55e; }
+    .todo-text { flex: 1; color: #ddd; font-size: 14px; }
+    .todo-text.done { color: var(--muted); text-decoration: line-through; }
+    .todo-delete { background: none; border: none; cursor: pointer; padding: 4px; opacity: 0.4; }
+    .todo-add-row { display: flex; gap: 8px; margin-top: 10px; }
+    .todo-input { flex: 1; background: #111; border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; color: #fff; font-size: 14px; outline: none; font-family: inherit; }
+    .todo-add-btn { background: var(--orange); border: none; border-radius: 10px; padding: 10px 14px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .two-col { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 20px; }
+    .hidden { display: none; }
+    svg.icon { vertical-align: middle; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-inner">
+    <div class="logo-area">
+      <img src="https://static.wixstatic.com/media/c13cef_dacb0953c83b4f6c9bb9b88b0ac2ead1~mv2.png/v1/fill/w_400,h_280,al_c,q_85,usm_0.66_1.00_0.01,enc_auto,quality_auto/logo.png" alt="London Tango Academy" />
+      <div class="logo-divider"></div>
+      <div class="logo-label">Dashboard <span id="liveBadge" style="font-size:9px;padding:2px 6px;border-radius:4px;margin-left:6px;background:rgba(249,101,43,0.15);color:#F9652B;letter-spacing:1px">LOADING</span></div>
+    </div>
+    <div class="date-text" id="dateDisplay"></div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Active Subscriptions -->
+  <div style="margin-bottom:20px">
+    <div class="section-title">
+      <div class="section-bar"></div>
+      <span class="section-label">Active Subscriptions</span>
+    </div>
+    <div class="stats-row" id="statsRow"></div>
+  </div>
+
+  <!-- Analytics -->
+  <div class="widget" style="margin-bottom:20px">
+    <div class="widget-header">
+      <div class="widget-icon-bg" style="background:rgba(249,101,43,0.13)">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F9652B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      </div>
+      <div>
+        <div class="widget-title">Site Analytics</div>
+        <div class="widget-subtitle">Last 30 days from Wix</div>
+      </div>
+    </div>
+    <div class="metric-btns" id="metricBtns"></div>
+    <div class="chart-wrap"><canvas id="analyticsChart"></canvas></div>
+  </div>
+
+  <!-- Newest Signups -->
+  <div class="widget" style="margin-bottom:20px">
+    <div class="widget-header">
+      <div class="widget-icon-bg" style="background:rgba(249,101,43,0.13)">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F9652B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/></svg>
+      </div>
+      <div>
+        <div class="widget-title">Newest Signups</div>
+        <div class="widget-subtitle" id="signupSubtitle"></div>
+      </div>
+    </div>
+    <div id="signupsList"></div>
+    <div id="contactedSection"></div>
+  </div>
+
+  <!-- Paused Members -->
+  <div class="widget" style="margin-bottom:20px">
+    <div class="widget-header">
+      <div class="widget-icon-bg" style="background:rgba(234,179,8,0.13)">
+        <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#eab308" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="10" x2="10" y1="15" y2="9"/><line x1="14" x2="14" y1="15" y2="9"/></svg>
+      </div>
+      <div>
+        <div class="widget-title">Paused Members</div>
+        <div class="widget-subtitle" id="pausedSubtitle"></div>
+      </div>
+    </div>
+    <div id="pausedList"></div>
+  </div>
+
+  <!-- Two column: Todo + Quick Messages -->
+  <div class="two-col">
+    <div class="widget">
+      <div class="widget-header">
+        <div class="widget-icon-bg" style="background:rgba(249,101,43,0.13)">
+          <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F9652B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><circle cx="8" cy="11" r="0.5"/><circle cx="8" cy="16" r="0.5"/></svg>
+        </div>
+        <div>
+          <div class="widget-title">Today's To-Do</div>
+          <div class="widget-subtitle" id="todoSubtitle"></div>
+        </div>
+      </div>
+      <div id="todoList"></div>
+      <div class="todo-add-row">
+        <input class="todo-input" id="todoInput" type="text" placeholder="Add a task..." />
+        <button class="todo-add-btn" id="todoAddBtn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="widget">
+      <div class="widget-header">
+        <div class="widget-icon-bg" style="background:rgba(249,101,43,0.13)">
+          <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F9652B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+        </div>
+        <div>
+          <div class="widget-title">Quick Messages</div>
+          <div class="widget-subtitle">Tap to expand Â· edit to refine your templates</div>
+        </div>
+      </div>
+      <div id="quickMessages"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ââ LIVE DATA (populated by API) ââ
+let STATS = { totalSubscribers: '...', newThisWeek: '...', cancellationsThisWeek: '...', pausedTotal: '...', netChange: '...' };
+let SIGNUPS = [];
+let PAUSED = [];
+let ANALYTICS = []; // Analytics loaded separately if available
+
+// ââ API FETCH ââ
+const API_BASE = window.location.origin;
+
+function formatDate(isoStr) {
+  const d = new Date(isoStr);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 0) {
+    return 'Today, ' + d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+  } else if (diffDays === 1) {
+    return 'Yesterday, ' + d.toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase();
+  } else {
+    return `${diffDays} days ago`;
+  }
+}
+
+function formatPauseDate(isoStr) {
+  const d = new Date(isoStr);
+  return d.toISOString().split('T')[0];
+}
+
+async function loadLiveData() {
+  try {
+    // 1. Fetch orders data
+    const ordersRes = await fetch(`${API_BASE}/api/orders`);
+    if (!ordersRes.ok) throw new Error('Orders API failed');
+    const ordersData = await ordersRes.json();
+
+    // 2. Resolve contact names
+    let contacts = {};
+    if (ordersData.contactIds && ordersData.contactIds.length > 0) {
+      const contactsRes = await fetch(`${API_BASE}/api/contacts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contactIds: ordersData.contactIds }),
+      });
+      if (contactsRes.ok) {
+        const cData = await contactsRes.json();
+        contacts = cData.contacts || {};
+      }
+    }
+
+    // 3. Update STATS
+    STATS = {
+      totalSubscribers: ordersData.stats.totalActive,
+      newThisWeek: ordersData.stats.newThisWeek,
+      cancellationsThisWeek: ordersData.stats.cancellationsThisWeek,
+      pausedTotal: ordersData.stats.pausedTotal,
+      netChange: ordersData.stats.netChange,
+    };
+
+    // 4. Build SIGNUPS from recent orders + contact info
+    SIGNUPS = ordersData.recentSignups.map((s, i) => {
+      const c = contacts[s.contactId] || {};
+      const daysAgo = Math.floor((Date.now() - new Date(s.createdDate)) / (1000*60*60*24));
+      return {
+        id: i + 1,
+        name: c.name || 'Loading...',
+        type: s.planName || 'Membership',
+        date: formatDate(s.createdDate),
+        daysAgo,
+        phone: c.phone || null,
+        email: c.email || null,
+        contacted: false,
+      };
+    });
+
+    // 5. Build PAUSED from paused orders + contact info
+    PAUSED = ordersData.pausedList.map((p, i) => {
+      const c = contacts[p.contactId] || {};
+      return {
+        id: i + 1,
+        name: c.name || 'Loading...',
+        pausedSince: formatPauseDate(p.pausedSince),
+        subscribedSince: formatPauseDate(p.subscribedSince),
+        daysPaused: p.daysPaused,
+        phone: c.phone || null,
+        email: c.email || null,
+      };
+    });
+
+    // 6. Re-render everything with live data
+    renderStats();
+    renderSignups();
+    renderPaused();
+
+    // Update loading indicator
+    const badge = document.getElementById('liveBadge');
+    if (badge) { badge.textContent = 'LIVE'; badge.style.background = 'rgba(34,197,94,0.15)'; badge.style.color = '#22c55e'; }
+
+  } catch (err) {
+    console.error('Failed to load live data:', err);
+    // Show error state
+    const badge = document.getElementById('liveBadge');
+    if (badge) { badge.textContent = 'OFFLINE'; badge.style.background = 'rgba(239,68,68,0.15)'; badge.style.color = '#ef4444'; }
+  }
+}
 
 const WELCOME = {
   "Paid â Beginner": n => `Hi ${n}, it's Leandro from London Tango Academy â welcome! Really glad you've joined us for your first tango steps ð Your classes are at 9 Endell Street, Covent Garden. Wear something comfortable you can move in, and smooth-soled shoes if you have them. Any questions, just message me here. Looking forward to meeting you!`,
@@ -615,6 +1312,9 @@ renderSignups();
 renderPaused();
 renderQuickMessages();
 renderTodos();
+
+// Load live data from Wix API (replaces placeholder data)
+loadLiveData();
 </script>
 </body>
 </html>
